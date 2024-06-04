@@ -1,10 +1,5 @@
 name: linting
 on:
-  # Cancel in-progress workflows when pushing
-  # a new commit on the same branch
-  concurrency:
-    group: ${{ github.workflow }}-${{ github.ref }}
-    cancel-in-progress: true
   push:
     branches:
       - main
@@ -15,6 +10,11 @@ on:
     tags:
       - '**'
 
+# Cancel in-progress workflows when pushing
+# a new commit on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   check-manifest:
     runs-on: ubuntu-latest
