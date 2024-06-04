@@ -3,7 +3,7 @@ on: [status]
 # Cancel in-progress workflows when pushing
 # a new commit on the same branch
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.number }}-${{ github.event.ref }}
   cancel-in-progress: true
 jobs:
   circleci_result_artifact_redirector_job:
