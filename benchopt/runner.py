@@ -411,7 +411,12 @@ def _run_benchmark(benchmark, solvers=None, forced_solvers=None,
         save_file = output_dir / f"{output_name}.parquet"
         save_file = uniquify_results(save_file)
     try:
+        import joblib
+        
+        joblib.dump(df, save_file.with_suffix(".joblib"))
+        
         df.to_parquet(save_file)
+
     except Exception:
         # Failed to save the results as a parquet file, falling back
         # to csv. This can be due to mixed types columns or missing
