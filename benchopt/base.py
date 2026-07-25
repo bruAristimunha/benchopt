@@ -6,6 +6,7 @@ from .stopping_criterion import SingleRunCriterion
 from .stopping_criterion import SufficientProgressCriterion
 
 from .utils.misc import NamedTemporaryFile
+from .utils.terminal_output import colorify, CYAN
 from .utils.class_property import classproperty
 from .utils.dependencies_mixin import DependenciesMixin
 from .utils.parametrized_name_mixin import ParametrizedNameMixin
@@ -437,6 +438,32 @@ class BaseDataset(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
             dataset.get_data()
 
 
+def _cached_prepare(benchmark, dataset, force=False):
+    """Cache wrapper for each dataset as ignore depends on each dataset.
+
+    Datasets whose preparation does not depend on the seed can drop it
+    from the cache key by listing 'base_seed' in prepare_cache_ignore.
+    """
+    cache_ignore = getattr(dataset, 'prepare_cache_ignore', ())
+    ignore = (
+        ['base_seed'] if cache_ignore == "all" or 'base_seed' in cache_ignore
+        else None
+    )
+    return benchmark.cache(
+        BaseDataset._prepare, ignore=ignore, force=force,
+    )
+
+
+def _check_prepare_in_cache(benchmark, dataset, force=False):
+    """Frontal-node cache lookup for a dataset preparation.
+
+    `force` is ignored as `parallel_run` already handles it.
+    """
+    return _cached_prepare(benchmark, dataset).check_call_in_cache(
+        dataset=dataset, base_seed=benchmark.seed
+    )
+
+
 def _prepare_one(benchmark, dataset, force=False):
     """Prepare one dataset instance; used as the unit of work in parallel_run.
 
@@ -446,20 +473,14 @@ def _prepare_one(benchmark, dataset, force=False):
     success or the caught exception on failure.
     """
     exc = None
-    # Datasets whose preparation does not depend on the seed can drop it from
-    # the cache key by listing 'base_seed' in prepare_cache_ignore,
-    # handle this separately.
-    cache_ignore = getattr(type(dataset), 'prepare_cache_ignore', ())
-    ignore = ['base_seed'] if (
-        cache_ignore == "all" or 'base_seed' in cache_ignore
-    ) else None
-    cached_prepare = benchmark.cache(
-        BaseDataset._prepare, ignore=ignore, force=force
+    cached_prepare = _cached_prepare(benchmark, dataset, force=force)
+    cached = not force and cached_prepare.check_call_in_cache(
+        dataset=dataset, base_seed=benchmark.seed
     )
     print(f"Preparing {dataset} ...", end=' ', flush=True)
     try:
         cached_prepare(dataset=dataset, base_seed=benchmark.seed)
-        print("done")
+        print("done" + (colorify(" (cached)", CYAN) if cached else ""))
     except Exception as e:
         print("FAILED")
         print_exc()
@@ -467,6 +488,9 @@ def _prepare_one(benchmark, dataset, force=False):
     finally:
         print(end='', flush=True)
         return (str(dataset), exc)
+
+
+_prepare_one.check_call_in_cache = _check_prepare_in_cache
 
 
 class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
