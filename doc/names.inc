@@ -57,3 +57,5 @@
 .. _Bruno Aristimunha: https://github.com/bruAristimunha
 
 .. _Eduardo Montesuma: https://eddardd.github.io/
+
+.. _Felix Divo: https://felix.divo.link

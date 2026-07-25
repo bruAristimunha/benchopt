@@ -19,7 +19,7 @@ CLI
   ``.claude/skills/`` mirror for Claude Code. The skills are consolidated into a
   single ``using-benchopt`` skill (router ``SKILL.md`` plus task sub-files and
   asset templates) and ``sync-skills`` stamps the installed version and
-  retargets doc links. By `Thomas Moreau`_ (:gh:`959`, :gh:`980`)
+  retargets doc links. By `Thomas Moreau`_ (:gh:`959`, :gh:`980`, :gh:`982`)
 
 PLOT
 ~~~~
@@ -39,6 +39,13 @@ PLOT
 
 API
 ~~~
+
+- Cache hits are now detected on the main process before dispatching, so no
+  parallel job (loky, dask or SLURM/submitit) is launched for a
+  ``(dataset, objective, solver)`` run whose result is already cached. Such
+  runs are reported as ``done (cached)``. The same skip and ``done (cached)``
+  reporting also apply to dataset preparation.
+  By `Thomas Moreau`_ (:gh:`976`)
 
 - Custom plot ``options`` values can now be a callable taking the results
   DataFrame as input and returning the list of possible values for the option.
@@ -77,6 +84,11 @@ FIX
   to override it. Underlying shell errors are also better reported,
   instead of being swallowed. By `Johan Larsson`_ (:gh:`974`)
 
+- Fix ``sampling_strategy`` inherited from the objective being resolved too
+  late, causing the reported strategy -- and the cache key it feeds into --
+  to depend on which solver had already run in the process.
+  By `Thomas Moreau`_ (:gh:`981`)
+
 - Fix ``benchopt sync-skills`` symlink with global install for Claude.
   By `Thomas Moreau`_ (:gh:`969`)
 
@@ -99,6 +111,11 @@ FIX
 - Fix error reporting when ``Solver.set_objective`` fails, which was
   preventing the run to finish normally.
   By `Thomas Moreau`_ (:gh:`949`)
+
+- Detect the requirements installed by ``benchopt install`` in the current
+  environment, by reloading the classes instead of relying on the import
+  outcome cached when collecting the benchmark.
+  By `Felix Divo`_ (:gh:`978`)
 
 .. _changes_1_9_1:
 
