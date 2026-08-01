@@ -128,6 +128,12 @@ def run_one_to_cvg(benchmark, objective, solver, meta, timeout, max_runs,
 
     with exception_handler(terminal, pdb=pdb) as ctx:
 
+        # Set dataset and objective. Note that _set_dataset is a no-op
+        # if it has already been called (sequential runs)
+        skip, reason = objective._set_dataset(objective._dataset)
+        if skip:
+            return [], run_key, 'skip', reason
+
         skip, reason = solver._set_objective(objective)
         if skip:
             return [], run_key, 'skip', reason

@@ -560,6 +560,11 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
     """
     _base_class_name = 'Objective'
 
+    # Set by `_set_dataset`, e.g. once run through `_generate_runs.py` or
+    # (post-unpickle) `run_one_to_cvg`. `_dataset_ready` guards re-running it.
+    _dataset = None
+    _dataset_ready = False
+
     # All class attributes that need to be parsed when we cannot import
     # the objective must be listed here. name is a special case as it is
     # defined as a property.
@@ -703,6 +708,9 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
     # Save the dataset object used to get the objective data so we can avoid
     # hashing the data directly.
     def _set_dataset(self, dataset):
+        if self._dataset_ready and self._dataset is dataset:
+            return False, None
+
         self._dataset = dataset
         assert self.is_installed(raise_on_not_installed=True)
         data = dataset._get_data()
@@ -729,6 +737,8 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
                     "Parameters of Objective should not be "
                     "modified by 'set_data'."
                 )
+
+        self._dataset_ready = True
 
         return False,  None
 
@@ -785,10 +795,9 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
         )
 
     def __setstate__(self, state):
+        # `_set_dataset` is called later, by `run_one_to_cvg`.
         self._repetition = state['repetition']
-        dataset = state['dataset']
-        if dataset is not None:
-            self._set_dataset(dataset)
+        self._dataset = state['dataset']
 
     def _default_split(self, cv_fold, *arrays):
         train_index, test_index = cv_fold
