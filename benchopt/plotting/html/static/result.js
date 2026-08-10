@@ -1316,15 +1316,14 @@ function renderTable() {
   table_container.innerHTML = "";
 
   // Restore the hidden columns / order from a saved view when one is being
-  // loaded, otherwise start fresh with the table's default order.
-  tableHiddenColumns = new Set();
-  if (tablePendingView && Array.isArray(tablePendingView.hidden)) {
-    const valid = tablePendingView.hidden.filter(c => plotData.columns.includes(c));
-    // Never hide every column.
-    if (valid.length < plotData.columns.length) {
-      valid.forEach(c => tableHiddenColumns.add(c));
-    }
-  }
+  // loaded, otherwise keep the ones set through the column toggles.
+  const hidden = tablePendingView && Array.isArray(tablePendingView.hidden)
+    ? tablePendingView.hidden : [...tableHiddenColumns];
+  const valid = hidden.filter(c => plotData.columns.includes(c));
+  // Never hide every column.
+  tableHiddenColumns = new Set(
+    valid.length < plotData.columns.length ? valid : []
+  );
   const orderedData = orderTableData(plotData, tablePendingView && tablePendingView.order);
   tablePendingView = null;
 
