@@ -1327,6 +1327,15 @@ function renderTable() {
   const orderedData = orderTableData(plotData, tablePendingView && tablePendingView.order);
   tablePendingView = null;
 
+  // Title. Titles are stored with plotly line breaks (<br />).
+  if (plotData.title) {
+    const titleEl = document.createElement('h2');
+    titleEl.className =
+      'text-xl text-center text-gray-800 mb-6 whitespace-pre-line';
+    titleEl.innerText = plotData.title.replace(/<br\s*\/?>/g, '\n');
+    table_container.appendChild(titleEl);
+  }
+
   // Grid.js table with sortable columns and a search bar
   const card = document.createElement("div");
   card.className = "w-full bg-white overflow-hidden mx-auto";
@@ -1485,7 +1494,15 @@ async function exportTable() {
     document.querySelectorAll('#table_container .gridjs-table tbody tr')
   ).map(tr => Array.from(tr.querySelectorAll('td'), td => td.innerText));
 
-  let value = "\\begin{tabular}{l";
+  const title = (getPlotData() || {}).title;
+  let value = "";
+  if (title) {
+    // Caption above the table, kept on a single line.
+    value += "\\begin{table}[h]\n\\centering\n\\caption{";
+    value += title.replace(/<br\s*\/?>/g, ", ").replaceAll('_', '\\_');
+    value += "}\n";
+  }
+  value += "\\begin{tabular}{l";
   value += "c".repeat(displayedColumns.length);
   value += "}\n";
   value += "\\hline\n";
@@ -1506,6 +1523,7 @@ async function exportTable() {
 
   value += "\\hline\n";
   value += "\\end{tabular}";
+  if (title) value += "\n\\end{table}";
 
   try {
     await navigator.clipboard.writeText(value);
