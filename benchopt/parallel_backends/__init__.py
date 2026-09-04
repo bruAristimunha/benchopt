@@ -107,7 +107,7 @@ def parallel_run(benchmark, run, run_kwargs_generator, config, collect=False):
         yield ready.popleft()
 
 
-def check_parallel_config(parallel_config_file, n_jobs):
+def check_parallel_config(parallel_config_file, n_jobs, group_by=None):
     """Returns the parallelism config information for the run.
 
     If nothing is provided, default to `loky` backend with n_jobs=1.
@@ -119,6 +119,11 @@ def check_parallel_config(parallel_config_file, n_jobs):
         information. If None, defaults to None.
     n_jobs: int or None
         Number of parallel jobs to run. If None, defaults to None.
+    group_by: str or list or None
+        Axes to hold constant per batch of runs, from the CLI ``--group-by``
+        (comma-separated). When set, it overrides ``group_by`` from the
+        parallel config file. ``batch_n_jobs`` has no CLI flag and is only
+        read from the parallel config file.
 
     Returns
     -------
@@ -149,6 +154,12 @@ def check_parallel_config(parallel_config_file, n_jobs):
             parallel_config['n_jobs'] = n_jobs
     else:
         parallel_config = {'backend': 'loky', 'n_jobs': n_jobs}
+
+    # CLI `--group-by` (comma-separated) overrides the parallel-config file.
+    if group_by:
+        if isinstance(group_by, str):
+            group_by = [a.strip() for a in group_by.split(',')]
+        parallel_config['group_by'] = group_by
 
     assert 'backend' in parallel_config, (
         "Could not find `backend` specification in parallel_config file. "

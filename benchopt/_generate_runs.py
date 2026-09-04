@@ -3,7 +3,7 @@ import inspect
 import itertools
 
 from .utils.parametrized_name_mixin import is_matched
-from .utils.run_context import RunContext
+from .utils.run_context import RunContext, SeedContextError
 
 # Canonical loop nesting order when no grouping is requested (rep innermost).
 CANONICAL_AXES = ('dataset', 'objective', 'solver')
@@ -354,12 +354,25 @@ def _prepare_folds(benchmark, base_run_context, dataset, objective,
     first solver (see :meth:`BaseObjective._set_repetition`) and reused by the
     others, so no fold is built up front on the front node.
     """
-    # rep=0 context so get_seed works during the skip-check _set_dataset.
+    # rep=0 context, solver=None: folds are shared across solvers, so the data
+    # must not depend on the solver. This skip-check runs `set_data` with no
+    # solver, so a `get_seed(use_solver=True)` in it fails fast here (front
+    # node, before dispatch) -- turn that into a clear group_by message.
     base_run_context.set_run_context(
         objective=objective, dataset=dataset, solver=None, repetition=0,
         base_seed=benchmark.seed,
     )
-    skip, reason = objective._set_dataset(dataset)
+    try:
+        skip, reason = objective._set_dataset(dataset)
+    except SeedContextError as e:
+        if e.component != 'solver':
+            raise
+        raise ValueError(
+            "`group_by` with 'repetition' shares each fold across solvers, so "
+            "the data must not depend on the solver -- but `set_data` called "
+            "`get_seed(use_solver=True)`. Remove 'repetition' from `group_by` "
+            "or make the data solver-independent."
+        ) from e
     if skip:
         terminal.skip(reason, objective=True)
         return None

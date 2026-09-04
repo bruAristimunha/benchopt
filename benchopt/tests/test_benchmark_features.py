@@ -370,6 +370,48 @@ def test_dataset_gc_default_config(tmp_path, no_debug_log):
     assert max(counts) <= 2, counts
 
 
+def test_group_by_repetition_solver_seed_error(no_debug_log):
+    # Fold-sharing (`group_by` with 'repetition') prepares each fold once and
+    # reuses it across solvers, so the data must be solver-independent. A
+    # `get_seed(use_solver=True)` in `set_data` must fail fast on the front
+    # node with a clear `group_by` message, not a confusing internal error.
+    objective = """from benchopt.utils.temp_benchmark import TempObjective
+
+    class Objective(TempObjective):
+        name = "o"
+        def set_data(self, X, y):
+            self.get_seed(use_solver=True)
+            self.X, self.y = X, y
+        def get_objective(self): return dict(X=self.X, y=self.y)
+        def evaluate_result(self, **kw): return dict(value=1.0)
+        def get_one_result(self): return dict(beta=0)
+    """
+    dataset = """from benchopt import BaseDataset
+    import numpy as np
+
+    class Dataset(BaseDataset):
+        name = "d"
+        def get_data(self): return dict(X=np.ones((10, 2)), y=np.zeros(10))
+    """
+    solver = """from benchopt.utils.temp_benchmark import TempSolver
+
+    class Solver(TempSolver):
+        name = "s"
+        sampling_strategy = 'run_once'
+        def set_objective(self, X, y): pass
+        def run(self, n_iter): pass
+        def get_result(self): return dict(beta=0)
+    """
+    with temp_benchmark(
+            objective=objective, solvers=solver, datasets=dataset
+    ) as bench:
+        with pytest.raises(ValueError, match="must not depend on the solver"):
+            run([str(bench.benchmark_dir),
+                 *("-s s -d d -n 1 -r 2 --no-plot "
+                   "--group-by dataset,objective,repetition").split()],
+                standalone_mode=False)
+
+
 def test_objective_save_final_results(no_debug_log):
     save_final = """
     from benchopt.utils.temp_benchmark import TempObjective
