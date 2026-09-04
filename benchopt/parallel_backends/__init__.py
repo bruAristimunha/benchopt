@@ -3,6 +3,8 @@ from collections import deque
 from joblib import parallel_config
 from joblib import Parallel, delayed
 
+from .._generate_runs import group_runs, _normalize_group_by
+
 _DISTRIBUTED_FRONTAL = False
 
 DISTRIBUTED_BACKENDS = ('loky', 'dask', 'submitit')
@@ -17,16 +19,32 @@ def is_distributed_frontal():
     return _DISTRIBUTED_FRONTAL
 
 
+def run_batch(run, batch, n_jobs=1):
+    """Run ``run(**kwargs)`` for each kwargs in `batch`, in one process if
+    ``n_jobs <= 1`` (max cache/state reuse across the batch) else in
+    `n_jobs` sub-processes.
+    """
+    if n_jobs <= 1:
+        return [run(**run_kwargs) for run_kwargs in batch]
+    return Parallel(n_jobs=n_jobs)(
+        delayed(run)(**run_kwargs) for run_kwargs in batch
+    )
+
+
 def _dispatch(backend, benchmark, run, run_kwargs_iter, config,
               group_by=None, batch_n_jobs=1):
     """Run ``run(**kwargs)`` for each kwargs on the chosen backend, yielding
     results as they complete.
+
+    Runs are grouped by ``group_by`` (see `group_runs`) so that runs sharing
+    the group key run in the same process/job, reusing dataset/objective
+    state loaded on their front-end instance.
     """
+    batches = group_runs(run_kwargs_iter, group_by)
     if backend == 'submitit':
         from .slurm_executor import run_on_slurm
         yield from run_on_slurm(
-            benchmark, config, run, run_kwargs_iter,
-            group_by=group_by, batch_n_jobs=batch_n_jobs,
+            benchmark, config, run, batches, batch_n_jobs=batch_n_jobs,
         )
     else:
         if backend == 'dask':
@@ -35,11 +53,13 @@ def _dispatch(backend, benchmark, run, run_kwargs_iter, config,
         # `batch_size` is a `Parallel` argument, not a `parallel_config` one.
         batch_size = config.pop('batch_size', 'auto')
         with parallel_config(backend, **config):
-            yield from Parallel(
+            for batch_results in Parallel(
                 return_as="generator_unordered", batch_size=batch_size
             )(
-                delayed(run)(**run_kwargs) for run_kwargs in run_kwargs_iter
-            )
+                delayed(run_batch)(run, batch, batch_n_jobs)
+                for batch in batches
+            ):
+                yield from batch_results
 
 
 def parallel_run(benchmark, run, run_kwargs_generator, config, collect=False):
@@ -138,14 +158,13 @@ def check_parallel_config(parallel_config_file, n_jobs):
     backend = parallel_config['backend']
     group_by = parallel_config.get('group_by')
     batch_n_jobs = parallel_config.get('batch_n_jobs', 1)
-    if group_by is not None or 'batch_n_jobs' in parallel_config:
-        assert backend == 'submitit', (
-            "`group_by` and `batch_n_jobs` are only supported with the "
-            "submitit backend."
-        )
-        assert group_by in ('dataset', 'solver', 'objective'), (
-            "`batch_n_jobs` requires `group_by` to be 'dataset', 'solver' or "
-            f"'objective'. Got '{group_by}'."
+    if group_by is not None:
+        # Normalize str|list to a validated list, shared with the generator
+        # so both sides of the run stream agree on the nesting order.
+        parallel_config['group_by'] = _normalize_group_by(group_by)
+    if 'batch_n_jobs' in parallel_config:
+        assert group_by is not None, (
+            "`batch_n_jobs` requires `group_by` to be set."
         )
         # bools are ints in Python, but never a valid `batch_n_jobs`
         assert (

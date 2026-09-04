@@ -92,72 +92,69 @@ def _run_batch(run_one_solver, batch_kwargs, n_jobs=1):
     )
 
 
-def _group_runs(all_runs, slurm_config, group_by):
-    """Split runs into batches as ``(job_slurm_config, runs)`` pairs.
+def _split_by_slurm_config(batch, slurm_config):
+    """Sub-partition a `group_runs` batch into ``(job_slurm_config, runs)``
+    pairs, one per distinct SLURM config found in the batch.
 
-    Runs sharing a `group_by` value and the same SLURM config go in one job.
-    Runs without a `group_by` value each get their own job.
+    A batch shares its `group_by` key, but can still span several solvers
+    with different `slurm_params` (e.g. ``group_by=['dataset']``), so it is
+    never itself the SLURM job unit -- each same-config run of items is.
     """
-    groups, singles = {}, []
-    for kwargs in all_runs:
+    groups, order = {}, []
+    for kwargs in batch:
         solver = kwargs.get("solver")
         if solver is not None:
             job_slurm_config = get_solver_slurm_config(solver, slurm_config)
         else:
             job_slurm_config = slurm_config
 
-        key = None
-        if group_by is not None:
-            # `benchopt run` names the entities in the run metadata, other
-            # entry points (e.g. dataset preparation) pass them directly.
-            meta = kwargs.get("meta", {})
-            key = meta.get(f"{group_by}_name", kwargs.get(group_by))
-        if key is None:
-            singles.append((job_slurm_config, [kwargs]))
-            continue
         cfg = hashable_pytree(job_slurm_config)
-        groups.setdefault(
-            (str(key), cfg), (job_slurm_config, [])
-        )[1].append(kwargs)
-    return singles + list(groups.values())
+        if cfg not in groups:
+            groups[cfg] = (job_slurm_config, [])
+            order.append(cfg)
+        groups[cfg][1].append(kwargs)
+    return [groups[cfg] for cfg in order]
 
 
 def run_on_slurm(
-    benchmark, slurm_config, run_one_solver, run_kwargs_generator,
-    group_by=None, batch_n_jobs=1
+    benchmark, slurm_config, run_one_solver, batches, batch_n_jobs=1
 ):
+    """Submit each pre-grouped batch (see `group_runs`) as SLURM job(s).
 
-    run_groups = _group_runs(
-        list(run_kwargs_generator), slurm_config, group_by
-    )
-
+    A batch is further split by SLURM config (`_split_by_slurm_config`),
+    since it can span several solvers with different `slurm_params`.
+    """
     executors = {}
     tasks = []
     with ExitStack() as stack:
-        for job_slurm_config, run_group in run_groups:
-            # A job runs its group in `waves` rounds, so it needs `waves` times
-            # the per-run timeout; different lengths get their own array.
-            waves = math.ceil(len(run_group) / batch_n_jobs)
-            executor_config = (hashable_pytree(job_slurm_config), waves)
+        for batch in batches:
+            for job_slurm_config, run_group in _split_by_slurm_config(
+                batch, slurm_config
+            ):
+                # A job runs its group in `waves` rounds, so it needs `waves`
+                # times the per-run timeout; different lengths get their own
+                # array.
+                waves = math.ceil(len(run_group) / batch_n_jobs)
+                executor_config = (hashable_pytree(job_slurm_config), waves)
 
-            if executor_config not in executors:
-                timeout = run_group[0].get("timeout")
-                if timeout is not None:
-                    timeout *= waves
-                executor = get_slurm_executor(
-                    benchmark,
-                    job_slurm_config,
-                    timeout=timeout,
-                )
-                stack.enter_context(executor.batch())
-                executors[executor_config] = executor
+                if executor_config not in executors:
+                    timeout = run_group[0].get("timeout")
+                    if timeout is not None:
+                        timeout *= waves
+                    executor = get_slurm_executor(
+                        benchmark,
+                        job_slurm_config,
+                        timeout=timeout,
+                    )
+                    stack.enter_context(executor.batch())
+                    executors[executor_config] = executor
 
-            tasks.append(executors[executor_config].submit(
-                _run_batch,
-                run_one_solver=run_one_solver,
-                batch_kwargs=run_group,
-                n_jobs=batch_n_jobs,
-            ))
+                tasks.append(executors[executor_config].submit(
+                    _run_batch,
+                    run_one_solver=run_one_solver,
+                    batch_kwargs=run_group,
+                    n_jobs=batch_n_jobs,
+                ))
 
     # Yield results as jobs finish (unordered)
     for t in as_completed(tasks):

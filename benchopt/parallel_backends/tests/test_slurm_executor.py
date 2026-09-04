@@ -11,7 +11,7 @@ submitit = pytest.importorskip("submitit")
 
 from submitit.slurm.test_slurm import mocked_slurm  # noqa: E402
 from benchopt.parallel_backends.slurm_executor import (  # noqa: E402
-    _group_runs,
+    _split_by_slurm_config,
     get_slurm_executor,
     get_solver_slurm_config,
 )
@@ -228,27 +228,26 @@ def test_run_on_slurm(mocked_submitit, dummy_slurm_config):
         )
 
 
-def test_group_runs():
-    # `group_by` reads the entity name from the run metadata (`benchopt run`)
-    # or from the kwargs directly (`benchopt prepare`), never merges runs with
-    # different SLURM configs, and leaves ungroupable runs on their own.
+def test_split_by_slurm_config():
+    # A `group_runs` batch shares its `group_by` key but can still span
+    # several solvers with different `slurm_params`; `_split_by_slurm_config`
+    # further partitions it so each distinct SLURM config gets its own job.
     solver = SimpleNamespace(slurm_params={}, _parameters={})
     other = SimpleNamespace(slurm_params={"slurm_nodes": 4}, _parameters={})
-    runs = [
+    batch = [
         {"meta": {"dataset_name": "d1"}, "solver": solver},
         {"meta": {"dataset_name": "d1"}, "solver": solver},
         {"meta": {"dataset_name": "d1"}, "solver": other},
-        {"meta": {"dataset_name": "d2"}, "solver": solver},
     ]
-    groups = _group_runs(runs, {}, group_by="dataset")
-    assert sorted(len(kw) for _cfg, kw in groups) == [1, 1, 2]
-    assert len(_group_runs(runs, {}, group_by=None)) == 4
-
-    # `benchopt prepare` passes the dataset directly, and has no solver.
-    prepare = [{"dataset": "d1"}, {"dataset": "d1"}, {"dataset": "d2"}]
-    groups = _group_runs(prepare, {}, group_by="dataset")
+    groups = _split_by_slurm_config(batch, {})
     assert sorted(len(kw) for _cfg, kw in groups) == [1, 2]
-    assert len(_group_runs(prepare, {}, group_by="solver")) == 3
+
+    # `benchopt prepare` passes the dataset directly, and has no solver --
+    # such runs all share the top-level SLURM config.
+    prepare = [{"dataset": "d1"}, {"dataset": "d2"}]
+    groups = _split_by_slurm_config(prepare, {})
+    assert len(groups) == 1
+    assert len(groups[0][1]) == 2
 
 
 @pytest.mark.parametrize("batch_n_jobs, waves", [(1, 2), (2, 1)])

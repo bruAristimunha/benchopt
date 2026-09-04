@@ -777,11 +777,38 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
         self.get_objective()
         return self.get_one_result()
 
+    def _set_repetition(self, repetition):
+        """Select the repetition (CV fold) for this run and prepare its data.
+
+        Pulled from the run context on the compute node rather than stamped at
+        generation time, so the front node builds no fold up front. The data is
+        prepared on first use and skipped afterwards, tracked by
+        ``_prepared_rep``: a fold shared across solvers (via
+        ``group_by=[..., 'repetition']``) is thus prepared once, by the first
+        solver, and reused by the rest.
+        """
+        if getattr(self, '_prepared_rep', None) == repetition:
+            return
+        self._repetition = repetition
+        if getattr(self, '_dataset', None) is not None:
+            self._set_dataset(self._dataset)
+            self._prepared_rep = repetition
+
     def _get_state(self):
-        """Return the state of the objective for pickling."""
+        """Return the state of the objective for pickling.
+
+        The repetition is read from the run context (the source of truth on the
+        front node) so a worker rebuilds the right fold even though the rep is
+        no longer stamped on the instance at generation time.
+        """
+        ctx = getattr(self, '_run_context', None)
+        repetition = (
+            ctx.repetition if ctx is not None and ctx.repetition is not None
+            else getattr(self, '_repetition', 0)
+        )
         return dict(
             dataset=getattr(self, '_dataset', None),
-            repetition=getattr(self, '_repetition', 0)
+            repetition=repetition,
         )
 
     def __setstate__(self, state):
@@ -789,6 +816,9 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
         dataset = state['dataset']
         if dataset is not None:
             self._set_dataset(dataset)
+            # Data is prepared for this fold; mark it so the compute-node
+            # `_set_repetition` does not redundantly rebuild it.
+            self._prepared_rep = self._repetition
 
     def _default_split(self, cv_fold, *arrays):
         train_index, test_index = cv_fold

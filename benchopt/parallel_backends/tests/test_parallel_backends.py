@@ -233,10 +233,15 @@ def test_submitit_backend(monkeypatch):
 
 
 @pytest.mark.parametrize("config, match", [
-    ({"backend": "submitit", "group_by": "invalid"}, "group_by"),
+    ({"backend": "submitit", "group_by": "invalid"}, "Unknown"),
+    # 'repetition' present but not nested inside dataset/objective (ordering).
+    (
+        {"backend": "submitit",
+         "group_by": ["repetition", "dataset", "objective"]},
+        "must nest inside",
+    ),
     ({"backend": "submitit", "batch_n_jobs": 2}, "requires `group_by`"),
-    ({"backend": "dask", "group_by": "dataset"}, "only supported"),
-    ({"backend": "loky", "batch_n_jobs": 2}, "only supported"),
+    ({"backend": "loky", "batch_n_jobs": 2}, "requires `group_by`"),
     (
         {"backend": "submitit", "group_by": "dataset", "batch_n_jobs": 0},
         "positive integer",
@@ -247,5 +252,15 @@ def test_submitit_backend(monkeypatch):
     ),
 ])
 def test_invalid_parallel_config(config, match):
-    with pytest.raises(AssertionError, match=match):
+    with pytest.raises((AssertionError, ValueError), match=match):
         check_parallel_config(config, None)
+
+
+@pytest.mark.parametrize("backend", ["loky", "dask", "submitit"])
+def test_group_by_allowed_on_all_backends(backend):
+    # `group_by`/`batch_n_jobs` reduce per-run overhead (shared in-process
+    # state) on any backend, not just submitit.
+    cfg = check_parallel_config(
+        {"backend": backend, "group_by": "dataset"}, None
+    )
+    assert cfg["group_by"] == ["dataset"]

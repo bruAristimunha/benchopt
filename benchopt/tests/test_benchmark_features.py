@@ -310,6 +310,66 @@ def test_objective_cv_splitter(no_debug_log):
     out.check_output("OK", repetition=4)
 
 
+def test_dataset_gc_default_config(tmp_path, no_debug_log):
+    # In the default config the dataset is the outermost loop axis, so each
+    # dataset instance (and the data it caches) is released as the run advances
+    # instead of all datasets being pinned at once. Each `get_data` records how
+    # many Dataset instances are alive; only the current one (+ at most one
+    # predecessor awaiting collection) should be, never all of them.
+    log = tmp_path / "alive.log"
+    n_datasets = 5
+    dataset = f"""from benchopt import BaseDataset
+    import numpy as np, gc, weakref
+
+    class Dataset(BaseDataset):
+        name = "big"
+        parameters = {{'k': {list(range(n_datasets))}}}
+        _alive = []
+
+        def get_data(self):
+            Dataset._alive.append(weakref.ref(self))
+            gc.collect()
+            n_alive = sum(r() is not None for r in Dataset._alive)
+            with open(r"{log}", "a") as f:
+                print(n_alive, file=f)
+            return dict(X=np.ones((30, 2)), y=np.zeros(30))
+    """
+
+    objective = """from benchopt.utils.temp_benchmark import TempObjective
+
+    class Objective(TempObjective):
+        name = "o"
+        parameters = {'reg': [0, 1]}
+        def set_data(self, X, y): self.X, self.y = X, y
+        def get_objective(self): return dict(X=self.X, y=self.y)
+        def evaluate_result(self, **kw): return dict(value=1.0)
+        def get_one_result(self): return dict(beta=0)
+    """
+
+    solver = """from benchopt.utils.temp_benchmark import TempSolver
+
+    class Solver(TempSolver):
+        name = "s"
+        parameters = {'step': [0, 1]}
+        sampling_strategy = 'run_once'
+        def set_objective(self, X, y): pass
+        def run(self, n_iter): pass
+        def get_result(self): return dict(beta=0)
+    """
+
+    with temp_benchmark(
+            objective=objective, solvers=solver, datasets=dataset
+    ) as bench:
+        run([str(bench.benchmark_dir),
+             *"-s s -d big -n 1 -r 1 -j 1 --no-plot".split()],
+            standalone_mode=False)
+
+    counts = [int(x) for x in log.read_text().split()]
+    assert len(counts) >= n_datasets, counts
+    # Never all datasets resident at once (that would be `n_datasets`).
+    assert max(counts) <= 2, counts
+
+
 def test_objective_save_final_results(no_debug_log):
     save_final = """
     from benchopt.utils.temp_benchmark import TempObjective
