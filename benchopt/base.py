@@ -541,7 +541,7 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
     **Installation:**
 
     - ``requirements``: the minimal requirements to be able to run the
-       benchmark.
+      benchmark.
     - ``min_benchopt_version``: the minimal version of benchopt required to run
       this benchmark.
     - ``python_version``: a specific version of Python required to run
@@ -559,6 +559,13 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
       benchmark.
     """
     _base_class_name = 'Objective'
+
+    # Set by `_set_dataset`, e.g. once run through `_generate_runs.py` or
+    # (post-unpickle) `run_one_to_cvg`. `_dataset_ready` guards re-running it.
+    _dataset = None
+    _dataset_ready = False
+    # Set directly by `run_one_to_cvg` for each repetition.
+    _repetition = 0
 
     # All class attributes that need to be parsed when we cannot import
     # the objective must be listed here. name is a special case as it is
@@ -703,6 +710,9 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
     # Save the dataset object used to get the objective data so we can avoid
     # hashing the data directly.
     def _set_dataset(self, dataset):
+        if self._dataset_ready and self._dataset is dataset:
+            return False, None
+
         self._dataset = dataset
         assert self.is_installed(raise_on_not_installed=True)
         data = dataset._get_data()
@@ -729,6 +739,8 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
                     "Parameters of Objective should not be "
                     "modified by 'set_data'."
                 )
+
+        self._dataset_ready = True
 
         return False,  None
 
@@ -777,49 +789,6 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
         self.get_objective()
         return self.get_one_result()
 
-    def _set_repetition(self, repetition):
-        """Select the repetition (CV fold) for this run and prepare its data.
-
-        Pulled from the run context on the compute node rather than stamped at
-        generation time, so the front node builds no fold up front. The data is
-        prepared on first use and skipped afterwards, tracked by
-        ``_prepared_rep``: a fold shared across solvers (via
-        ``group_by=[..., 'repetition']``) is thus prepared once, by the first
-        solver, and reused by the rest.
-        """
-        if getattr(self, '_prepared_rep', None) == repetition:
-            return
-        self._repetition = repetition
-        if getattr(self, '_dataset', None) is not None:
-            self._set_dataset(self._dataset)
-            self._prepared_rep = repetition
-
-    def _get_state(self):
-        """Return the state of the objective for pickling.
-
-        The repetition is read from the run context (the source of truth on the
-        front node) so a worker rebuilds the right fold even though the rep is
-        no longer stamped on the instance at generation time.
-        """
-        ctx = getattr(self, '_run_context', None)
-        repetition = (
-            ctx.repetition if ctx is not None and ctx.repetition is not None
-            else getattr(self, '_repetition', 0)
-        )
-        return dict(
-            dataset=getattr(self, '_dataset', None),
-            repetition=repetition,
-        )
-
-    def __setstate__(self, state):
-        self._repetition = state['repetition']
-        dataset = state['dataset']
-        if dataset is not None:
-            self._set_dataset(dataset)
-            # Data is prepared for this fold; mark it so the compute-node
-            # `_set_repetition` does not redundantly rebuild it.
-            self._prepared_rep = self._repetition
-
     def _default_split(self, cv_fold, *arrays):
         train_index, test_index = cv_fold
         res = ()
@@ -864,7 +833,7 @@ class BaseObjective(ParametrizedNameMixin, DependenciesMixin, RunContextMixin,
         cv_fold_generator = repeat()
         # Perform the split with default split function if it is not defined by
         # the user.
-        rep = getattr(self, "_repetition", 0)
+        rep = self._repetition
         for _ in range(rep + 1):
             cv_fold = next(cv_fold_generator)
 

@@ -10,8 +10,17 @@ What's new
 Version 1.10.0 -- in development
 --------------------------------
 
+.. warning::
+    This release changes the run cache key, so upgrading will recompute
+    every cached run once.
+
 CLI
 ~~~
+
+- Add ``benchopt info -f <result_file>`` (repeatable, or ``-f all``) to
+  summarize result file(s) instead of listing benchmark solvers/datasets;
+  plain ``benchopt info`` now also lists available result files.
+  By `Thomas Moreau`_ (:gh:`990`)
 
 - Ship agent skills (``SKILL.md``, `Agent Skills <https://agentskills.io>`_
   standard) as package data and add ``benchopt sync-skills`` to install them
@@ -30,6 +39,10 @@ CLI
 
 PLOT
 ~~~~
+
+- Table cells can be formatted with ``**bold**``, ``*italic*`` and
+  ``__underlined__`` markers.
+  By `Hippolyte Verninas`_ (:gh:`993`)
 
 - Change the plotly style to make it more like matplotlib.
   By `Hippolyte Verninas`_ (:gh:`966`)
@@ -84,6 +97,9 @@ TST
 
 FIX
 ~~~
+
+- Fix ``get_seed`` raising in a ``Dataset``'s ``get_data`` when running with
+  ``-j`` greater than 1. By `Thomas Moreau`_ (:gh:`984`)
 
 - Fix shell handling on Windows so ``benchopt install``/``test`` work with a
   bash-like shell (e.g. GitHub ``shell: bash`` runners).

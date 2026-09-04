@@ -19,6 +19,12 @@ result file. `benchopt merge` writes `merged_results.parquet` and
 `benchopt plot --all` writes `all_runs.html`, a table of contents for navigating
 to the HTML report of every parquet in the folder.
 
+For a quick look at what a result file contains without opening Python, use
+`benchopt info -f <result_file>` — prints row/config/repetition counts, the
+objective/solver/dataset names, the `objective_<name>` columns present, and
+the run date. Also lists available result files with plain `benchopt info`
+(add `-f all` to summarize every one of them).
+
 ## Read a result file in Python
 
 The public entry point is `read_results` — it handles `.parquet` and `.csv`,
@@ -167,7 +173,9 @@ set `name` and `type` (`scatter`/`bar_chart`/`boxplot`/`table`/`image`),
 implement `plot(df, **options)` (returns data shaped by `type`) and
 `get_metadata` (title/labels/scale), and use `self.get_style(label)` for a
 consistent color/marker per solver. The `name` then appears in the HTML menu and
-works as a `plot_kind` in `plot_configs` (above). For the per-type return schema
+works as a `plot_kind` in `plot_configs` (above). Table cells accept
+`**bold**`, `*italic*` and `__underlined__` markers, rendered in the HTML
+report and in the LaTeX export; escape a literal marker with `r"a \* b"`. For the per-type return schema
 and a full example, see the custom-plot doc:
 https://benchopt.github.io/stable/user_guide/add_custom_plot.html
 

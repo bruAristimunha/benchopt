@@ -15,7 +15,9 @@ from benchopt.results.files_utils import rm_folder
 from benchopt.cli.completion import complete_benchmarks
 from benchopt.cli.completion import complete_conda_envs
 from benchopt.cli.completion import complete_datasets
+from benchopt.cli.completion import complete_output_files
 from benchopt.cli.completion import complete_solvers
+from benchopt.results.result_processing import describe_results
 from benchopt.utils.conda_env_cmd import list_conda_envs
 from benchopt.config import get_global_config_file
 from benchopt.config import GLOBAL_CONFIG_FILE_MODE
@@ -192,7 +194,8 @@ def _format_choices(choices):
     return f"{listed} ({n} total)"
 
 
-def print_info(cls_name_list, cls_list, env_name=None, verbose=False):
+def _print_component_info(
+        cls_name_list, cls_list, env_name=None, verbose=False):
     """Print information for each element of input listed
 
     Parameters
@@ -279,6 +282,49 @@ def print_info(cls_name_list, cls_list, env_name=None, verbose=False):
             print("-" * 10)
 
 
+def _print_available_result_files(benchmark):
+    """Print the result files available in the benchmark's output folder."""
+    try:
+        result_files = benchmark.get_result_files('all')
+    except RuntimeError:
+        return
+    print("# RESULT FILES", flush=True)
+    for result_file in result_files:
+        print(f"- {result_file.name}")
+    print("-" * 10)
+
+
+def _print_result_file_summary(result_file):
+    """Print a summary of a benchopt result file (parquet or csv)."""
+    summary = describe_results(result_file)
+
+    print(f"Info regarding the result file '{result_file}'")
+    print("-" * 10)
+    print(f"Rows: {summary['n_rows']}")
+    print(f"Configs (objective x solver x dataset): {summary['n_configs']}")
+
+    if summary['n_repetitions'] is not None:
+        print(f"Repetitions: {summary['n_repetitions']}")
+
+    for key in ['objectives', 'solvers', 'datasets']:
+        names = summary[key]
+        print(f"{key.capitalize()} ({len(names)}): {', '.join(names)}")
+
+    if summary['objective_columns']:
+        print(
+            "Objective columns: "
+            f"{', '.join(summary['objective_columns'])}"
+        )
+
+    if summary['run_dates']:
+        run_dates = summary['run_dates']
+        run_date_range = (
+            run_dates[0] if len(run_dates) == 1
+            else f"{run_dates[0]} -> {run_dates[-1]}"
+        )
+        print(f"Run date: {run_date_range}")
+
+
 @helpers.command(
     help="List information (solvers/datasets) and corresponding requirements "
     "for a given benchmark."
@@ -307,6 +353,17 @@ def print_info(cls_name_list, cls_list, env_name=None, verbose=False):
               "To include all datasets, use `-d 'all'` option."
               "Using a `-d` option will trigger the verbose output.",
               shell_complete=complete_datasets)
+@click.option('--filename', '-f', 'result_filenames',
+              metavar="<result_file>", multiple=True, type=str,
+              shell_complete=complete_output_files,
+              help="Summarize <result_file> (number of configs, objective "
+              "columns, repetitions, ...) instead of listing benchmark "
+              "solvers/datasets. If not an existing path, it is resolved "
+              "relative to the benchmark's output folder, as for "
+              "`benchopt plot -f`. To summarize multiple files, use "
+              "multiple `-f` options. To summarize every result file, use "
+              "`-f 'all'`. By default (no `-f`), a short summary of the "
+              "available result files is printed instead.")
 @click.option('--env', '-e', 'env_name',
               flag_value='True', type=str, default='False',
               help="Additional checks for requirement availability in "
@@ -321,11 +378,23 @@ def print_info(cls_name_list, cls_list, env_name=None, verbose=False):
               is_flag=True,
               help="If used, list solver/dataset "
               "parameters, dependencies and availability.")
-def info(benchmark, solver_names, dataset_names, env_name='False',
-         verbose=False):
+def info(benchmark, solver_names, dataset_names, result_filenames=(),
+         env_name='False', verbose=False):
 
     # benchmark
     benchmark = Benchmark(benchmark)
+
+    if result_filenames:
+        filenames = (
+            'all' if 'all' in result_filenames else list(result_filenames)
+        )
+        result_files = benchmark.get_result_files(filenames)
+        for i, result_file in enumerate(result_files):
+            if i > 0:
+                print()
+            _print_result_file_summary(result_file)
+        return
+
     print(f"Info regarding the benchmark '{benchmark.name}'")
 
     # validate solvers and datasets
@@ -377,11 +446,13 @@ def info(benchmark, solver_names, dataset_names, env_name='False',
         solver_names = ['all']
     if dataset_names:
         print("# DATASETS", flush=True)
-        print_info(dataset_names, all_datasets, env_name, verbose)
+        _print_component_info(dataset_names, all_datasets, env_name, verbose)
 
     if solver_names:
         print("# SOLVERS", flush=True)
-        print_info(solver_names, all_solvers, env_name, verbose)
+        _print_component_info(solver_names, all_solvers, env_name, verbose)
+
+    _print_available_result_files(benchmark)
 
 
 @helpers.command()

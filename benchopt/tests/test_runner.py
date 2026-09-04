@@ -503,8 +503,30 @@ class TestSeed:
                     run(cmd_str.split(),
                         standalone_mode=False)
 
-        seeds = out.check_output(r"(?m)^#SEED-obj=.*", repetition=2)
-        assert seeds[0] == seeds[1], "Seeds should be equal"
+                # Check that get_seed() works with parallel runs.
+                run((cmd_str + " -j 2").split(), standalone_mode=False)
+
+        seeds = out.check_output(r"(?m)^#SEED-obj=.*", repetition=3)
+        assert len(set(seeds)) == 1, "Seeds should be equal"
+
+    def test_solver_simple(self, no_debug_log):
+        with temp_benchmark(
+            objective=self.get_objective(),
+            solvers=self.get_solver(),
+            datasets=self.get_dataset()
+        ) as bench:
+            with CaptureCmdOutput() as out:
+                cmd_str = f"{bench.benchmark_dir} --no-cache "
+                cmd_str += "--no-plot"
+                for it in range(2):
+                    run(cmd_str.split(),
+                        standalone_mode=False)
+
+                # Check that get_seed() works with parallel runs.
+                run((cmd_str + " -j 2").split(), standalone_mode=False)
+
+        seeds = out.check_output(r"(?m)^#SEED-sol=.*", repetition=3)
+        assert len(set(seeds)) == 1, "Seeds should be equal"
 
     def test_dataset_simple(self, no_debug_log):
         with temp_benchmark(
@@ -519,8 +541,13 @@ class TestSeed:
                     run(cmd_str.split(),
                         standalone_mode=False)
 
-        seeds = out.check_output(r"(?m)^#SEED-data=.*", repetition=2)
-        assert seeds[0] == seeds[1], "Seeds are not equal"
+                # Check that get_seed() works with parallel runs.
+                run((cmd_str + " -j 2").split(), standalone_mode=False)
+
+        # get_data() runs once per -j1 call, and twice for the -j2 call (once
+        # during dispatch, once more in the worker).
+        seeds = out.check_output(r"(?m)^#SEED-data=.*", repetition=4)
+        assert len(set(seeds)) == 1, "Seeds are not equal"
 
     def test_seed_different(self, no_debug_log):
         with temp_benchmark(

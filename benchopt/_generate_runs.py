@@ -301,13 +301,11 @@ def get_solver_kwargs(
         repetition=0, base_seed=benchmark.seed,
     )
 
-    # Set objective and skip if necessary. This prepares the base objective at
-    # fold 0; mark it so rep-0 copies reuse it instead of re-preparing.
+    # Set objective and skip if necessary.
     skip, reason = objective._set_dataset(dataset)
     if skip:
         terminal.skip(reason, objective=True)
         return []
-    objective._prepared_rep = 0
 
     if n_repetitions is None:
         if hasattr(objective, "cv"):
@@ -327,18 +325,17 @@ def get_solver_kwargs(
         meta = _run_meta(benchmark, dataset, objective, solver, rep,
                          sampling_strategy, obj_description)
 
-        # The repetition travels in the run context; the compute node pulls it
-        # and prepares the fold (see `BaseObjective._set_repetition`), so we do
-        # not stamp the rep or build every fold on the front node.
+        # Context for this repetition, used by get_seed() in run_one_to_cvg.
         run_ctx = run_context.set_run_context(
             objective=objective_rep, dataset=dataset, solver=solver,
             repetition=rep, base_seed=benchmark.seed,
         )
 
         args_run_one_to_cvg = dict(
-            benchmark=benchmark, objective=objective_rep, solver=solver,
-            meta=meta, timeout=timeout, max_runs=max_runs, force=force,
-            terminal=terminal, run_context=run_ctx,
+            benchmark=benchmark, dataset=dataset, objective=objective_rep,
+            solver=solver, repetition=rep, meta=meta, timeout=timeout,
+            max_runs=max_runs, force=force, terminal=terminal,
+            run_context=run_ctx,
         )
 
         yield args_run_one_to_cvg
@@ -348,11 +345,13 @@ def _prepare_folds(benchmark, base_run_context, dataset, objective,
                    n_repetitions, terminal):
     """Enumerate the per-fold objectives shared across solvers of a (d, o).
 
-    Returns a list of ``(rep, objective_rep)`` -- one shared objective per
-    fold, *not yet prepared* -- or ``None`` if the (dataset, objective) pair
-    is skipped. Each fold's data is prepared lazily on the compute node by the
-    first solver (see :meth:`BaseObjective._set_repetition`) and reused by the
-    others, so no fold is built up front on the front node.
+    Returns a list of ``(rep, objective_rep)`` -- one objective per fold -- or
+    ``None`` if the (dataset, objective) pair is skipped. The data is set once
+    here, with a ``solver=None`` context (the fold is shared across solvers,
+    so it must be solver-independent); each fold objective only carries a
+    different repetition, used by ``get_split``. On the compute node
+    ``_set_dataset`` is a no-op for these already-prepared instances (see
+    :meth:`BaseObjective._set_dataset`).
     """
     # rep=0 context, solver=None: folds are shared across solvers, so the data
     # must not depend on the solver. This skip-check runs `set_data` with no
@@ -439,8 +438,9 @@ def _generate_rep_grouped(benchmark, order, axis_items, forced_solvers,
             repetition=rep, base_seed=benchmark.seed,
         )
         return dict(
-            benchmark=benchmark, objective=objective_rep, solver=solver,
-            meta=meta, timeout=timeout, max_runs=max_runs,
+            benchmark=benchmark, dataset=dataset, objective=objective_rep,
+            solver=solver, repetition=rep, meta=meta, timeout=timeout,
+            max_runs=max_runs,
             force=is_matched(str(solver), forced_solvers, default=False),
             terminal=terminal, run_context=run_ctx,
         )
@@ -482,11 +482,9 @@ def generate_run_kwargs(
     benchmark execution.
     """
     if 'repetition' in _normalize_group_by(group_by):
-        # rep is a grouping axis -> nest it (above solver) and share each fold
-        # across solvers. A separate path (not merged with the default) because
-        # fold-sharing runs `_set_dataset` once per (dataset, objective) with
-        # `solver=None`, whereas the default runs it per (d, o, solver); a
-        # merge would shift the default seed context and break byte-identity.
+        # rep is a grouping axis -> nest it as its own level (above solver) so
+        # runs can be batched by fold and each fold's data is set once and
+        # shared across its solvers. The default path keeps rep innermost.
         order = _ordered_axes(group_by)
         axis_items = _materialize_axes(order, datasets, objectives, solvers)
         yield from _generate_rep_grouped(
