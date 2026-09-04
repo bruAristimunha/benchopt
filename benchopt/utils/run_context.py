@@ -39,8 +39,8 @@ class RunContext:
     Config fields (set once in ``_run_benchmark``):
         run_output_base, pdb
 
-    Per-run fields (filled via ``dataclasses.replace`` in
-    ``get_solver_kwargs`` for each dataset × objective × solver × rep):
+    Per-run fields (filled via ``dataclasses.replace`` in ``set_run_context``
+    for each dataset × objective × solver × rep):
         base_seed, objective_name, dataset_name, solver_name, repetition
     """
     # Config fields — set once per benchmark invocation

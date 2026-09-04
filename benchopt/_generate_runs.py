@@ -175,190 +175,19 @@ def _run_meta(benchmark, dataset, objective, solver, rep, sampling_strategy,
     }
 
 
-def _get_all_runs(benchmark, solvers=None, forced_solvers=None,
-                  datasets=None, objectives=None, terminal=None,
-                  group_by=None):
-    """Generator with all combinations to run for the benchmark.
+def _prepare_objective(benchmark, run_context, dataset, objective, solver,
+                       n_repetitions, terminal):
+    """Set the objective's data and resolve its repetition count.
 
-    Parameters
-    ----------
-    benchmark : benchopt.Benchmark object
-        Object to represent the benchmark.
-    solvers : list | None
-        List of solvers to include in the benchmark. If None
-        all solvers available are run.
-    forced_solvers : list | None
-        List of solvers to include in the benchmark and for
-        which one forces recomputation.
-    datasets : list | None
-        List of datasets to include. If None all available
-        datasets are used.
-    objectives : list | None
-        Filters to select specific objective parameters. If None,
-        all objective parameters are tested
-    terminal : TerminalOutput or None
-        Object to format string to display the terminal.
-
-    Yields
-    ------
-    dataset : BaseDataset instance
-    objective : BaseObjective instance
-    solver : BaseSolver instance
-    force : bool
+    Called with the run's ``solver`` on the default (rep-innermost) path, where
+    each run reseeds with its own solver. When ``repetition`` is a group_by
+    level the fold is shared across solvers, so it is called with
+    ``solver=None``: the data must then be solver-independent, and a
+    ``get_seed(use_solver=True)`` in ``get_data``/``set_data`` fails fast here
+    with a clear error. Returns the repetition count, or ``None`` if skipped.
     """
-    # Non-rep path: rep is expanded downstream by `get_solver_kwargs`, so only
-    # nest the d/o/s axes here (rep is always last in the order when absent).
-    order = [a for a in _ordered_axes(group_by) if a != 'repetition']
-    axis_items = _materialize_axes(order, datasets, objectives, solvers)
-    terminal.set_levels(order)
-
-    def _rec(depth, chosen):
-        axis = order[depth]
-        for i_axis, (item, is_installed) in enumerate(axis_items[axis]):
-            if not _enter_axis(terminal, axis, item, is_installed,
-                               i_solver=i_axis):
-                continue
-            chosen[axis] = item
-            if depth + 1 == len(order):
-                solver = chosen['solver']
-                yield dict(
-                    dataset=chosen['dataset'], objective=chosen['objective'],
-                    solver=solver,
-                    force=is_matched(
-                        str(solver), forced_solvers, default=False
-                    ),
-                    terminal=terminal,
-                )
-            else:
-                yield from _rec(depth + 1, chosen)
-
-    yield from _rec(0, {})
-
-
-def get_solver_kwargs(
-    benchmark, dataset, objective, solver, n_repetitions, max_runs,
-    timeout=None, force=False, collect=False, terminal=None,
-    run_context=None,
-):
-    """Run a benchmark for a given dataset, objective and solver.
-
-    Parameters
-    ----------
-    benchmark : benchopt.Benchmark object
-        Object to represent the benchmark.
-    dataset : instance of BaseDataset
-        The dataset used for this benchmark.
-    objective : instance of BaseObjective
-        The objective to minimize.
-    solver : instance of BaseSolver
-        The solver to use.
-    n_repetitions : int
-        The number of repetitions to run. Defaults to 1.
-    max_runs : int
-        The maximum number of solver runs to perform to estimate
-        the convergence curve.
-    timeout : float
-        The maximum duration in seconds of the solver run.
-    force : bool
-        If force is set to True, ignore the cache and run the computations
-        for the solver anyway. Else, use the cache if available.
-    collect : bool
-        If set to True, only collect the results that have been put in cache,
-        and ignore the results that are not computed yet, default is False.
-    terminal : TerminalOutput or None
-        Object to format string to display the progress of the solver.
-    run_context : RunContext | None
-        Base context created in ``_run_benchmark`` carrying config fields
-        (``pdb``, ``run_output_base``).  Cloned here for each repetition
-        with the per-run fields filled in.
-
-    Returns
-    -------
-    args_run_one_to_cvg : dict
-        The dictionary of arguments to run_one_to_cvg.
-    """
-    run_context = run_context or RunContext()
-
-    # Resolve inheritance now rather than at `_set_objective` run time: meta
-    # below feeds the cache key, so it must not depend on whether some other
-    # (solver, dataset) pair already triggered this resolution earlier on.
-    solver._inherit_stopping_criterion(objective)
-
-    # get sampling strategy
-    # for plotting purpose consider 'callback' as 'iteration'
-    sampling_strategy = solver._solver_strategy
-    if sampling_strategy == 'callback':
-        sampling_strategy = 'iteration'
-
-    # get objective description
-    # use `obj_` instead of `objective_` to avoid conflicts with
-    # the name of metrics in Objective.compute
-    obj_description = objective.__doc__ or ""
-
-    # Set run context with rep=0 so get_seed() works during _set_dataset.
-    run_context = run_context.set_run_context(
-        objective=objective, dataset=dataset, solver=solver,
-        repetition=0, base_seed=benchmark.seed,
-    )
-
-    # Set objective and skip if necessary.
-    skip, reason = objective._set_dataset(dataset)
-    if skip:
-        terminal.skip(reason, objective=True)
-        return []
-
-    if n_repetitions is None:
-        if hasattr(objective, "cv"):
-            n_repetitions = objective.cv.get_n_splits(
-                **getattr(objective, "cv_metadata", {})
-            )
-        else:
-            # we set 1 by default so that the solver run at least once
-            n_repetitions = 1
-
-    terminal.n_repetitions = n_repetitions
-
-    for rep in range(n_repetitions):
-        objective_rep = copy.copy(objective)
-
-        # Get meta
-        meta = _run_meta(benchmark, dataset, objective, solver, rep,
-                         sampling_strategy, obj_description)
-
-        # Context for this repetition, used by get_seed() in run_one_to_cvg.
-        run_ctx = run_context.set_run_context(
-            objective=objective_rep, dataset=dataset, solver=solver,
-            repetition=rep, base_seed=benchmark.seed,
-        )
-
-        args_run_one_to_cvg = dict(
-            benchmark=benchmark, dataset=dataset, objective=objective_rep,
-            solver=solver, repetition=rep, meta=meta, timeout=timeout,
-            max_runs=max_runs, force=force, terminal=terminal,
-            run_context=run_ctx,
-        )
-
-        yield args_run_one_to_cvg
-
-
-def _prepare_folds(benchmark, base_run_context, dataset, objective,
-                   n_repetitions, terminal):
-    """Enumerate the per-fold objectives shared across solvers of a (d, o).
-
-    Returns a list of ``(rep, objective_rep)`` -- one objective per fold -- or
-    ``None`` if the (dataset, objective) pair is skipped. The data is set once
-    here, with a ``solver=None`` context (the fold is shared across solvers,
-    so it must be solver-independent); each fold objective only carries a
-    different repetition, used by ``get_split``. On the compute node
-    ``_set_dataset`` is a no-op for these already-prepared instances (see
-    :meth:`BaseObjective._set_dataset`).
-    """
-    # rep=0 context, solver=None: folds are shared across solvers, so the data
-    # must not depend on the solver. This skip-check runs `set_data` with no
-    # solver, so a `get_seed(use_solver=True)` in it fails fast here (front
-    # node, before dispatch) -- turn that into a clear group_by message.
-    base_run_context.set_run_context(
-        objective=objective, dataset=dataset, solver=None, repetition=0,
+    run_context.set_run_context(
+        objective=objective, dataset=dataset, solver=solver, repetition=0,
         base_seed=benchmark.seed,
     )
     try:
@@ -368,9 +197,9 @@ def _prepare_folds(benchmark, base_run_context, dataset, objective,
             raise
         raise ValueError(
             "`group_by` with 'repetition' shares each fold across solvers, so "
-            "the data must not depend on the solver -- but `set_data` called "
-            "`get_seed(use_solver=True)`. Remove 'repetition' from `group_by` "
-            "or make the data solver-independent."
+            "the data must not depend on the solver -- but `get_data`/"
+            "`set_data` called `get_seed(use_solver=True)`. Remove "
+            "'repetition' from `group_by` or make the data solver-independent."
         ) from e
     if skip:
         terminal.skip(reason, objective=True)
@@ -382,52 +211,43 @@ def _prepare_folds(benchmark, base_run_context, dataset, objective,
                 **getattr(objective, "cv_metadata", {})
             )
         else:
+            # 1 by default so the solver runs at least once.
             n_repetitions = 1
     terminal.n_repetitions = n_repetitions
-
-    folds = []
-    for rep in range(n_repetitions):
-        objective_rep = copy.copy(objective)
-        objective_rep._repetition = rep
-        folds.append((rep, objective_rep))
-    return folds
+    return n_repetitions
 
 
-def _generate_rep_grouped(benchmark, order, axis_items, forced_solvers,
-                          n_repetitions, max_runs, timeout, terminal,
-                          run_context):
-    """Ordered nest over d/o/rep/s, sharing a fold's objective across solvers.
+def generate_run_kwargs(
+    benchmark, solvers=None, forced_solvers=None, datasets=None,
+    objectives=None, n_repetitions=1, max_runs=10, timeout=None,
+    collect=False, terminal=None, run_context=None, group_by=None,
+):
+    """Yield kwargs for each ``run_one_to_cvg`` call in the benchmark.
 
-    Used when ``repetition`` is a group_by axis (e.g. ``[dataset, objective,
-    repetition]`` batches solvers under each fold). Yields final run kwargs.
-    The nest over ``order`` is walked as a recursive program (``_rec``), not
-    fixed loops, so any axis ordering works.
+    Walks the axes in ``group_by`` order (see :func:`_ordered_axes`) as one
+    recursive nest, holding the group_by axes constant outermost.
+    ``repetition`` is the innermost axis by default -- expanded per
+    (dataset, objective, solver) and shown as the ``(k / total)`` counter --
+    but becomes a display level (a ``|--rep k`` node) when it is a group_by
+    axis, so solvers batch under a shared fold.
     """
+    order = _ordered_axes(group_by)
+    # rep stays the innermost runtime counter unless it is a group_by level.
+    rep_is_level = order[-1] != 'repetition'
+    axis_items = _materialize_axes(order, datasets, objectives, solvers)
+    terminal.set_levels(order if rep_is_level else order[:-1])
     base_ctx = run_context or RunContext()
-    terminal.set_levels(order)
-    # `dataset` and `objective` are always outer to `repetition` (enforced by
-    # `_normalize_group_by`), so a (d, o) is fully emitted before the next one.
-    # Cache only the current (d, o)'s folds: advancing to the next (d, o) drops
-    # the previous folds so their prepared data can be GC'd once dispatched. A
-    # persistent cache would instead pin every fold of every (d, o) all run.
-    current_folds = {'key': None, 'folds': None}
-
-    def folds_for(dataset, objective):
-        key = (id(dataset), id(objective))
-        if current_folds['key'] != key:
-            current_folds['key'] = key
-            current_folds['folds'] = _prepare_folds(
-                benchmark, base_ctx, dataset, objective, n_repetitions,
-                terminal,
-            )
-        return current_folds['folds']
 
     def _leaf(chosen):
-        rep, objective_rep = chosen['repetition']
-        dataset, objective, solver = (
-            chosen['dataset'], chosen['objective'], chosen['solver']
-        )
+        dataset, objective = chosen['dataset'], chosen['objective']
+        solver, rep = chosen['solver'], chosen['repetition']
+        # A shallow copy carries the already-set data (reused in-process,
+        # reloaded on a worker via `_set_dataset`).
+        objective_rep = copy.copy(objective)
+        # Resolve inheritance now: `meta` feeds the cache key and must not
+        # depend on which solver ran first in the process.
         solver._inherit_stopping_criterion(objective)
+        # for plotting purposes consider 'callback' as 'iteration'
         sampling_strategy = solver._solver_strategy
         if sampling_strategy == 'callback':
             sampling_strategy = 'iteration'
@@ -440,26 +260,32 @@ def _generate_rep_grouped(benchmark, order, axis_items, forced_solvers,
         return dict(
             benchmark=benchmark, dataset=dataset, objective=objective_rep,
             solver=solver, repetition=rep, meta=meta, timeout=timeout,
-            max_runs=max_runs,
+            max_runs=max_runs, terminal=terminal, run_context=run_ctx,
             force=is_matched(str(solver), forced_solvers, default=False),
-            terminal=terminal, run_context=run_ctx,
         )
 
     def _rec(depth, chosen):
         axis = order[depth]
         last = depth + 1 == len(order)
         if axis == 'repetition':
-            folds = folds_for(chosen['dataset'], chosen['objective'])
-            if folds is None:  # skipped (dataset, objective)
+            n_reps = _prepare_objective(
+                benchmark, base_ctx, chosen['dataset'], chosen['objective'],
+                chosen.get('solver'), n_repetitions, terminal,
+            )
+            if n_reps is None:  # skipped (dataset, objective)
                 return
-            items = [(f, True) for f in folds]
-        else:
-            items = axis_items[axis]
-        for i_axis, (item, is_installed) in enumerate(items):
-            if axis == 'repetition':
-                terminal.display_rep(item[0])  # item = (rep, objective_rep)
-            elif not _enter_axis(terminal, axis, item, is_installed,
-                                 i_solver=i_axis):
+            for rep in range(n_reps):
+                if rep_is_level:
+                    terminal.display_rep(rep)
+                chosen['repetition'] = rep
+                if last:
+                    yield _leaf(chosen)
+                else:
+                    yield from _rec(depth + 1, chosen)
+            return
+        for i_axis, (item, is_installed) in enumerate(axis_items[axis]):
+            if not _enter_axis(terminal, axis, item, is_installed,
+                               i_solver=i_axis):
                 continue
             chosen[axis] = item
             if last:
@@ -468,39 +294,3 @@ def _generate_rep_grouped(benchmark, order, axis_items, forced_solvers,
                 yield from _rec(depth + 1, chosen)
 
     yield from _rec(0, {})
-
-
-def generate_run_kwargs(
-    benchmark, solvers=None, forced_solvers=None, datasets=None,
-    objectives=None, n_repetitions=1, max_runs=10, timeout=None,
-    collect=False, terminal=None, run_context=None, group_by=None,
-):
-    """Yield kwargs for each ``run_one_to_cvg`` call in the benchmark.
-
-    Combines the (dataset, objective, solver) enumeration with the per-run
-    metadata so that callers only need a single generator to drive the
-    benchmark execution.
-    """
-    if 'repetition' in _normalize_group_by(group_by):
-        # rep is a grouping axis -> nest it as its own level (above solver) so
-        # runs can be batched by fold and each fold's data is set once and
-        # shared across its solvers. The default path keeps rep innermost.
-        order = _ordered_axes(group_by)
-        axis_items = _materialize_axes(order, datasets, objectives, solvers)
-        yield from _generate_rep_grouped(
-            benchmark, order, axis_items,
-            forced_solvers, n_repetitions, max_runs, timeout, terminal,
-            run_context,
-        )
-        return
-
-    all_runs = _get_all_runs(
-        benchmark, solvers, forced_solvers, datasets, objectives,
-        terminal=terminal, group_by=group_by,
-    )
-    common_kwargs = dict(
-        benchmark=benchmark, n_repetitions=n_repetitions, max_runs=max_runs,
-        timeout=timeout, collect=collect, run_context=run_context,
-    )
-    for kwargs in all_runs:
-        yield from get_solver_kwargs(**common_kwargs, **kwargs)
