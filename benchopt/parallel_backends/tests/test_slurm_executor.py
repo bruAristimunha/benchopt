@@ -43,7 +43,7 @@ def dummy_solver():
 
 
 def _annotate_task_result(result, config):
-    # `run_one_solver` returns a (results, key, status, msg) tuple where
+    # `run` returns a (results, key, status, msg) tuple where
     # `results` is a list of run-statistics dicts. Only annotate those dicts
     # with the SLURM config used to run the job.
     if isinstance(result, tuple):
@@ -281,6 +281,6 @@ def test_run_on_slurm_grouped(mocked_submitit, batch_n_jobs, waves):
     assert len(mocked_submitit) == 1
     sub = mocked_submitit[0]
     # Compare by name: `patch_import` in other tests re-imports the module.
-    assert sub["func"].__name__ == "_run_batch"
+    assert sub["func"].__name__ == "run_batch"
     assert sub["kwargs"]["n_jobs"] == batch_n_jobs
     assert sub["config"]["time"] == f"00:{int(1.5 * waves * timeout)}"

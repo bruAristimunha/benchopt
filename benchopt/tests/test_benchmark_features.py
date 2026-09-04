@@ -318,10 +318,10 @@ def test_dataset_gc_default_config(tmp_path, no_debug_log):
     # predecessor awaiting collection) should be, never all of them.
     log = tmp_path / "alive.log"
     n_datasets = 5
-    dataset = f"""from benchopt import BaseDataset
-    import numpy as np, gc, weakref
+    dataset = f"""from benchopt.utils.temp_benchmark import TempDataset
+    import gc, weakref
 
-    class Dataset(BaseDataset):
+    class Dataset(TempDataset):
         name = "big"
         parameters = {{'k': {list(range(n_datasets))}}}
         _alive = []
@@ -332,36 +332,25 @@ def test_dataset_gc_default_config(tmp_path, no_debug_log):
             n_alive = sum(r() is not None for r in Dataset._alive)
             with open(r"{log}", "a") as f:
                 print(n_alive, file=f)
-            return dict(X=np.ones((30, 2)), y=np.zeros(30))
+            return dict(X=None, y=None)
     """
-
+    # A few objective/solver parameters exercise the materialized inner axes.
     objective = """from benchopt.utils.temp_benchmark import TempObjective
 
     class Objective(TempObjective):
-        name = "o"
         parameters = {'reg': [0, 1]}
-        def set_data(self, X, y): self.X, self.y = X, y
-        def get_objective(self): return dict(X=self.X, y=self.y)
-        def evaluate_result(self, **kw): return dict(value=1.0)
-        def get_one_result(self): return dict(beta=0)
     """
-
     solver = """from benchopt.utils.temp_benchmark import TempSolver
 
     class Solver(TempSolver):
-        name = "s"
         parameters = {'step': [0, 1]}
         sampling_strategy = 'run_once'
-        def set_objective(self, X, y): pass
-        def run(self, n_iter): pass
-        def get_result(self): return dict(beta=0)
     """
 
     with temp_benchmark(
             objective=objective, solvers=solver, datasets=dataset
     ) as bench:
-        run([str(bench.benchmark_dir),
-             *"-s s -d big -n 1 -r 1 -j 1 --no-plot".split()],
+        run([str(bench.benchmark_dir), *"-n 1 -r 1 --no-plot".split()],
             standalone_mode=False)
 
     counts = [int(x) for x in log.read_text().split()]
@@ -378,36 +367,13 @@ def test_group_by_repetition_solver_seed_error(no_debug_log):
     objective = """from benchopt.utils.temp_benchmark import TempObjective
 
     class Objective(TempObjective):
-        name = "o"
         def set_data(self, X, y):
             self.get_seed(use_solver=True)
-            self.X, self.y = X, y
-        def get_objective(self): return dict(X=self.X, y=self.y)
-        def evaluate_result(self, **kw): return dict(value=1.0)
-        def get_one_result(self): return dict(beta=0)
     """
-    dataset = """from benchopt import BaseDataset
-    import numpy as np
-
-    class Dataset(BaseDataset):
-        name = "d"
-        def get_data(self): return dict(X=np.ones((10, 2)), y=np.zeros(10))
-    """
-    solver = """from benchopt.utils.temp_benchmark import TempSolver
-
-    class Solver(TempSolver):
-        name = "s"
-        sampling_strategy = 'run_once'
-        def set_objective(self, X, y): pass
-        def run(self, n_iter): pass
-        def get_result(self): return dict(beta=0)
-    """
-    with temp_benchmark(
-            objective=objective, solvers=solver, datasets=dataset
-    ) as bench:
+    with temp_benchmark(objective=objective) as bench:
         with pytest.raises(ValueError, match="must not depend on the solver"):
             run([str(bench.benchmark_dir),
-                 *("-s s -d d -n 1 -r 2 --no-plot "
+                 *("-n 1 -r 2 --no-plot "
                    "--group-by dataset,objective,repetition").split()],
                 standalone_mode=False)
 

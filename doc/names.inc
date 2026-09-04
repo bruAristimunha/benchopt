@@ -54,7 +54,7 @@
 
 .. _Damien Lesens: https://damienlesens.github.io/
 
-.. _Bruno Aristimunha: https://github.com/bruAristimunha
+.. _Bruno Aristimunha: https://bruaristimunha.github.io/
 
 .. _Eduardo Montesuma: https://eddardd.github.io/
 

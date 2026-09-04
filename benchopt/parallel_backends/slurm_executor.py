@@ -1,8 +1,6 @@
 import math
 from contextlib import ExitStack
 
-from joblib import Parallel, delayed
-
 try:
     import submitit
     from submitit.helpers import as_completed
@@ -84,14 +82,6 @@ def hashable_pytree(pytree):
         return pytree
 
 
-def _run_batch(run_one_solver, batch_kwargs, n_jobs=1):
-    """Run multiple solver configurations in a single SLURM job."""
-    return Parallel(n_jobs=n_jobs)(
-        delayed(run_one_solver)(**kw)
-        for kw in batch_kwargs
-    )
-
-
 def _split_by_slurm_config(batch, slurm_config):
     """Sub-partition a `group_runs` batch into ``(job_slurm_config, runs)``
     pairs, one per distinct SLURM config found in the batch.
@@ -117,13 +107,16 @@ def _split_by_slurm_config(batch, slurm_config):
 
 
 def run_on_slurm(
-    benchmark, slurm_config, run_one_solver, batches, batch_n_jobs=1
+    benchmark, slurm_config, run, batches, batch_n_jobs=1
 ):
     """Submit each pre-grouped batch (see `group_runs`) as SLURM job(s).
 
     A batch is further split by SLURM config (`_split_by_slurm_config`),
     since it can span several solvers with different `slurm_params`.
     """
+    # `run_batch` is shared with the other backends' dispatch; imported lazily
+    # to avoid a circular import with the package ``__init__``.
+    from . import run_batch
     executors = {}
     tasks = []
     with ExitStack() as stack:
@@ -150,10 +143,7 @@ def run_on_slurm(
                     executors[executor_config] = executor
 
                 tasks.append(executors[executor_config].submit(
-                    _run_batch,
-                    run_one_solver=run_one_solver,
-                    batch_kwargs=run_group,
-                    n_jobs=batch_n_jobs,
+                    run_batch, run=run, batch=run_group, n_jobs=batch_n_jobs,
                 ))
 
     # Yield results as jobs finish (unordered)
