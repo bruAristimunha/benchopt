@@ -21,6 +21,13 @@ CLI
   asset templates) and ``sync-skills`` stamps the installed version and
   retargets doc links. By `Thomas Moreau`_ (:gh:`959`, :gh:`980`, :gh:`982`)
 
+- Group runs into fewer execution units with ``group_by`` (and optional
+  intra-group parallelism via ``batch_n_jobs``) to reduce per-run overhead when
+  running in parallel, by sharing setup across the runs of a batch. ``group_by``
+  is settable from the CLI (``--group-by dataset,objective``) and accepts
+  ``repetition`` to share a cross-validation fold across solvers. See
+  :ref:`run_grouping`. By `Bruno Aristimunha`_ and `Thomas Moreau`_ (:gh:`903`)
+
 PLOT
 ~~~~
 
@@ -124,11 +131,6 @@ Version 1.9.1 -- 28/05/2026
 
 CLI
 ~~~
-
-- Add ``group_by`` and ``batch_n_jobs`` options to the submitit parallel
-  backend to group multiple runs into single SLURM jobs with optional inner
-  parallelism. See :ref:`slurm_grouping` for details. By `Bruno Aristimunha`_
-  (:gh:`903`)
 
 - Add ``benchopt prepare`` command to prepare the benchmark's dataset
   before launching them. Also deprecate the ``--download`` option in
